@@ -5,18 +5,19 @@ from enum import Enum
 
 import pygame
 
+from game.settings import (
+    WINDOW_WIDTH,
+    WINDOW_HEIGHT,
+    CELL_SIZE,
+    RENDER_FPS,
+    START_SPEED,
+    MAX_SPEED,
+    NUM_OBSTACLES,
+)
 
-WINDOW_WIDTH = 800
-WINDOW_HEIGHT = 600
-CELL_SIZE = 20
 
 GRID_WIDTH = WINDOW_WIDTH // CELL_SIZE
 GRID_HEIGHT = WINDOW_HEIGHT // CELL_SIZE
-
-RENDER_FPS = 60
-START_SPEED = 5
-MAX_SPEED = 16
-NUM_OBSTACLES = 25
 
 BACKGROUND_COLOR = (18, 18, 18)
 GRID_COLOR = (35, 35, 35)
@@ -24,10 +25,11 @@ SNAKE_HEAD_COLOR = (0, 200, 0)
 SNAKE_BODY_COLOR = (0, 150, 0)
 OBSTACLE_COLOR = (120, 120, 120)
 TEXT_COLOR = (240, 240, 240)
+BLACK = (0, 0, 0)
 
-APPLE_SMALL_COLOR = (255, 220, 0)
-APPLE_MEDIUM_COLOR = (255, 140, 0)
-APPLE_LARGE_COLOR = (220, 30, 30)
+APPLE_SMALL_COLOR = (255, 220, 0)   # yellow
+APPLE_MEDIUM_COLOR = (255, 140, 0)  # orange
+APPLE_LARGE_COLOR = (220, 30, 30)   # red
 
 
 class Direction(Enum):
@@ -41,14 +43,15 @@ class Direction(Enum):
 class AppleType:
     name: str
     points: int
+    speed_boost: float
     color: tuple[int, int, int]
     radius_ratio: float
 
 
 APPLE_TYPES = [
-    AppleType("small", 1, APPLE_SMALL_COLOR, 0.25),
-    AppleType("medium", 3, APPLE_MEDIUM_COLOR, 0.35),
-    AppleType("large", 5, APPLE_LARGE_COLOR, 0.48),
+    AppleType("yellow", 1, 0.5, APPLE_SMALL_COLOR, 0.25),
+    AppleType("orange", 3, 1.5, APPLE_MEDIUM_COLOR, 0.35),
+    AppleType("red", 5, 2.5, APPLE_LARGE_COLOR, 0.48),
 ]
 
 
@@ -75,7 +78,7 @@ class SnakeGame:
         self.next_direction = Direction.RIGHT
 
         self.score = 0
-        self.speed = START_SPEED
+        self.speed = float(START_SPEED)
         self.game_over = False
 
         self.move_timer = 0.0
@@ -160,13 +163,7 @@ class SnakeGame:
             self.snake.pop()
 
     def _increase_speed(self, apple_type):
-        speed_boost_map = {
-            "small": 1,
-            "medium": 2,
-            "large": 3,
-        }
-
-        self.speed += speed_boost_map[apple_type.name]
+        self.speed += apple_type.speed_boost
 
         if self.speed > MAX_SPEED:
             self.speed = MAX_SPEED
@@ -229,6 +226,41 @@ class SnakeGame:
             color = SNAKE_HEAD_COLOR if i == 0 else SNAKE_BODY_COLOR
             pygame.draw.rect(self.screen, color, rect, border_radius=4)
 
+            if i == 0:
+                self._draw_face(x, y)
+
+    def _draw_face(self, x, y):
+        head_left = x * CELL_SIZE
+        head_top = y * CELL_SIZE
+
+        eye_radius = max(2, CELL_SIZE // 10)
+
+        if self.direction == Direction.RIGHT:
+            eyes = [(0.7, 0.3), (0.7, 0.7)]
+            tongue_rect = pygame.Rect(head_left + CELL_SIZE - 2, head_top + CELL_SIZE//2 - 2, 8, 4)
+
+        elif self.direction == Direction.LEFT:
+            eyes = [(0.3, 0.3), (0.3, 0.7)]
+            tongue_rect = pygame.Rect(head_left - 6, head_top + CELL_SIZE//2 - 2, 8, 4)
+
+        elif self.direction == Direction.UP:
+            eyes = [(0.3, 0.3), (0.7, 0.3)]
+            tongue_rect = pygame.Rect(head_left + CELL_SIZE//2 - 2, head_top - 6, 4, 8)
+
+        else:
+            eyes = [(0.3, 0.7), (0.7, 0.7)]
+            tongue_rect = pygame.Rect(head_left + CELL_SIZE//2 - 2, head_top + CELL_SIZE - 2, 4, 8)
+
+        for ex, ey in eyes:
+            pygame.draw.circle(
+                self.screen,
+                BLACK,
+                (head_left + int(CELL_SIZE * ex), head_top + int(CELL_SIZE * ey)),
+                eye_radius
+            )
+
+        pygame.draw.rect(self.screen, (220, 60, 90), tongue_rect)
+
     def _draw_obstacles(self):
         for x, y in self.obstacles:
             rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
@@ -245,16 +277,10 @@ class SnakeGame:
 
     def _draw_ui(self):
         score_text = self.font.render(f"Score: {self.score}", True, TEXT_COLOR)
-        apple_text = self.font.render(
-            f"Apple: {self.apple_type.name} (+{self.apple_type.points})",
-            True,
-            TEXT_COLOR
-        )
-        speed_text = self.font.render(f"Speed: {self.speed}", True, TEXT_COLOR)
+        speed_text = self.font.render(f"Speed: {self.speed:.1f}", True, TEXT_COLOR)
 
         self.screen.blit(score_text, (10, 10))
-        self.screen.blit(apple_text, (10, 40))
-        self.screen.blit(speed_text, (10, 70))
+        self.screen.blit(speed_text, (10, 40))
 
     def _draw_game_over(self):
         overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
