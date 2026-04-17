@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pygame
 
+from game._font import make_font, render_text
 from game.settings import DISABLED_CONTROL_MODES, MENU_OPTIONS, WINDOW_HEIGHT, WINDOW_WIDTH
 
 
@@ -19,17 +20,16 @@ class ModeMenu:
     def __init__(self, screen: pygame.Surface, clock: pygame.time.Clock) -> None:
         self.screen = screen
         self.clock = clock
-        self.title_font = pygame.font.SysFont("consolas", 42)
-        self.subtitle_font = pygame.font.SysFont("consolas", 20)
-        self.option_font = pygame.font.SysFont("consolas", 28)
-        self.hint_font = pygame.font.SysFont("consolas", 18)
+        self.title_font = make_font(42)
+        self.subtitle_font = make_font(20)
+        self.option_font = make_font(28)
+        self.hint_font = make_font(18)
 
         self._selectable_modes = [
             mode for mode, _ in MENU_OPTIONS if mode not in DISABLED_CONTROL_MODES
         ]
         self._selected_idx = 0
 
-        # Pre-render gradient once instead of 600 lines every frame
         self._bg_surface = self._render_gradient()
 
     def run(self) -> str | None:
@@ -58,10 +58,8 @@ class ModeMenu:
     def _draw(self) -> None:
         self.screen.blit(self._bg_surface, (0, 0))
 
-        title_surface = self.title_font.render("Snake AI Project", True, TITLE_COLOR)
-        subtitle_surface = self.subtitle_font.render(
-            "Select a launch mode", True, SUBTITLE_COLOR
-        )
+        title_surface = render_text(self.title_font, "Snake AI Project", TITLE_COLOR)
+        subtitle_surface = render_text(self.subtitle_font, "Select a launch mode", SUBTITLE_COLOR)
 
         self.screen.blit(
             title_surface,
@@ -86,14 +84,16 @@ class ModeMenu:
                 pygame.draw.rect(self.screen, SELECTED_OPTION_BG, option_rect, border_radius=8)
 
             text_color = DISABLED_OPTION_COLOR if is_disabled else OPTION_COLOR
-            option_text = self.option_font.render(label, True, text_color)
+            option_text = render_text(self.option_font, label, text_color)
             self.screen.blit(
                 option_text,
                 (WINDOW_WIDTH // 2 - option_text.get_width() // 2, y + 7),
             )
 
-        hint_surface = self.hint_font.render(
-            "Arrow keys: move   Enter: confirm   Esc: quit", True, HINT_COLOR
+        hint_surface = render_text(
+            self.hint_font,
+            "Arrow keys: move   Enter: confirm   Esc: quit",
+            HINT_COLOR,
         )
         self.screen.blit(
             hint_surface,

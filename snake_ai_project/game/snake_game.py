@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pygame
 
 from agents.base import AgentDecision, BaseSnakeAgent, GameStateSnapshot
+from game._font import make_font, render_text
 from game.entities import Direction, direction_from_name, direction_to_name
 from game.settings import (
     WINDOW_WIDTH,
@@ -60,8 +61,6 @@ class SnakeGame:
         screen: pygame.Surface | None = None,
         clock: pygame.time.Clock | None = None,
     ):
-        # Reuse the screen and clock handed in from main; only create new
-        # ones when the game is launched standalone (e.g. for testing).
         if screen is None:
             pygame.init()
             screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -71,7 +70,7 @@ class SnakeGame:
 
         self.screen = screen
         self.clock = clock
-        self.font = pygame.font.SysFont("consolas", 24)
+        self.font = make_font(24)
 
         if agent is None:
             from agents import create_agent
@@ -342,9 +341,9 @@ class SnakeGame:
             pygame.draw.rect(self.screen, AI_PATH_COLOR, rect, width=2, border_radius=4)
 
     def _draw_ui(self):
-        score_text = self.font.render(f"Score: {self.score}", True, TEXT_COLOR)
-        speed_text = self.font.render(f"Speed: {self.speed:.1f}", True, TEXT_COLOR)
-        mode_text = self.font.render(f"Mode: {self.control_mode.upper()}", True, TEXT_COLOR)
+        score_text = render_text(self.font, f"Score: {self.score}", TEXT_COLOR)
+        speed_text = render_text(self.font, f"Speed: {self.speed:.1f}", TEXT_COLOR)
+        mode_text = render_text(self.font, f"Mode: {self.control_mode.upper()}", TEXT_COLOR)
 
         self.screen.blit(score_text, (10, 10))
         self.screen.blit(speed_text, (10, 40))
@@ -355,8 +354,8 @@ class SnakeGame:
         overlay.fill((0, 0, 0, 150))
         self.screen.blit(overlay, (0, 0))
 
-        text1 = self.font.render("Game Over", True, (255, 255, 255))
-        text2 = self.font.render("Press R to restart", True, (255, 255, 255))
+        text1 = render_text(self.font, "Game Over", (255, 255, 255))
+        text2 = render_text(self.font, "Press R to restart", (255, 255, 255))
 
         self.screen.blit(
             text1,
