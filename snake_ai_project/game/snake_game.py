@@ -1,10 +1,11 @@
 import random
 import sys
 from dataclasses import dataclass
-from enum import Enum
 
 import pygame
 
+from agents.base import AgentDecision, BaseSnakeAgent, GameStateSnapshot
+from game.entities import Direction, direction_from_name, direction_to_name
 from game.settings import (
     WINDOW_WIDTH,
     WINDOW_HEIGHT,
@@ -13,6 +14,8 @@ from game.settings import (
     START_SPEED,
     MAX_SPEED,
     NUM_OBSTACLES,
+    DEFAULT_CONTROL_MODE,
+    SHOW_AI_PATH_DEBUG,
 )
 
 
@@ -30,13 +33,7 @@ BLACK = (0, 0, 0)
 APPLE_SMALL_COLOR = (255, 220, 0)   # yellow
 APPLE_MEDIUM_COLOR = (255, 140, 0)  # orange
 APPLE_LARGE_COLOR = (220, 30, 30)   # red
-
-
-class Direction(Enum):
-    UP = (0, -1)
-    DOWN = (0, 1)
-    LEFT = (-1, 0)
-    RIGHT = (1, 0)
+AI_PATH_COLOR = (70, 130, 255)
 
 
 @dataclass(frozen=True)
@@ -56,12 +53,33 @@ APPLE_TYPES = [
 
 
 class SnakeGame:
-    def __init__(self):
-        pygame.init()
-        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-        pygame.display.set_caption("Snake AI Project")
-        self.clock = pygame.time.Clock()
+    def __init__(
+        self,
+        control_mode=DEFAULT_CONTROL_MODE,
+        agent: BaseSnakeAgent | None = None,
+        screen: pygame.Surface | None = None,
+        clock: pygame.time.Clock | None = None,
+    ):
+        # Reuse the screen and clock handed in from main; only create new
+        # ones when the game is launched standalone (e.g. for testing).
+        if screen is None:
+            pygame.init()
+            screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+            pygame.display.set_caption("Snake AI Project")
+        if clock is None:
+            clock = pygame.time.Clock()
+
+        self.screen = screen
+        self.clock = clock
         self.font = pygame.font.SysFont("consolas", 24)
+
+        if agent is None:
+            from agents import create_agent
+            agent = create_agent(control_mode)
+
+        self.agent = agent
+        self.control_mode = self.agent.mode
+        self.ai_path: list[tuple[int, int]] = []
 
         self.reset()
 
@@ -86,6 +104,8 @@ class SnakeGame:
 
         self.obstacles = self._generate_obstacles(NUM_OBSTACLES)
         self.apple_position, self.apple_type = self._spawn_apple()
+        self.ai_path = []
+        self.agent.reset()
 
     def run(self):
         while True:
@@ -97,6 +117,11 @@ class SnakeGame:
                 self.move_timer += dt
 
                 while self.move_timer >= self.move_delay:
+                    decision = self.agent.select_direction(self._build_state_snapshot())
+                    self._apply_agent_decision(decision)
+                    if self.game_over:
+                        break
+
                     self._update()
                     self.move_timer -= self.move_delay
 
@@ -111,16 +136,10 @@ class SnakeGame:
                 pygame.quit()
                 sys.exit()
 
+            self.agent.handle_event(event)
+
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_UP:
-                    self._change_direction(Direction.UP)
-                elif event.key == pygame.K_DOWN:
-                    self._change_direction(Direction.DOWN)
-                elif event.key == pygame.K_LEFT:
-                    self._change_direction(Direction.LEFT)
-                elif event.key == pygame.K_RIGHT:
-                    self._change_direction(Direction.RIGHT)
-                elif event.key == pygame.K_r and self.game_over:
+                if event.key == pygame.K_r and self.game_over:
                     self.reset()
 
     def _change_direction(self, new_direction):
@@ -134,18 +153,46 @@ class SnakeGame:
         if new_direction != opposite[self.direction]:
             self.next_direction = new_direction
 
+    def _build_state_snapshot(self) -> GameStateSnapshot:
+        return GameStateSnapshot(
+            snake=tuple(self.snake),
+            direction=direction_to_name(self.direction),
+            next_direction=direction_to_name(self.next_direction),
+            apple_position=self.apple_position,
+            obstacles=frozenset(self.obstacles),
+            grid_width=GRID_WIDTH,
+            grid_height=GRID_HEIGHT,
+            score=self.score,
+            speed=self.speed,
+            game_over=self.game_over,
+        )
+
+    def _apply_agent_decision(self, decision: AgentDecision) -> None:
+        if decision.force_game_over:
+            self.ai_path = []
+            self.game_over = True
+            return
+
+        if decision.next_direction is not None:
+            try:
+                self._change_direction(direction_from_name(decision.next_direction))
+            except KeyError:
+                pass
+
+        if decision.debug_path is not None:
+            self.ai_path = list(decision.debug_path)
+        elif self.control_mode != "astar":
+            self.ai_path = []
+
     def _update(self):
         self.direction = self.next_direction
         dx, dy = self.direction.value
 
         head_x, head_y = self.snake[0]
         new_head = (head_x + dx, head_y + dy)
+        will_grow = new_head == self.apple_position
 
         if not (0 <= new_head[0] < GRID_WIDTH and 0 <= new_head[1] < GRID_HEIGHT):
-            self.game_over = True
-            return
-
-        if new_head in self.snake:
             self.game_over = True
             return
 
@@ -153,14 +200,21 @@ class SnakeGame:
             self.game_over = True
             return
 
+        if new_head in self.snake:
+            tail_cell = self.snake[-1]
+            if not (not will_grow and new_head == tail_cell):
+                self.game_over = True
+                return
+
         self.snake.insert(0, new_head)
 
-        if new_head == self.apple_position:
+        if will_grow:
             self.score += self.apple_type.points
             self._increase_speed(self.apple_type)
             self.apple_position, self.apple_type = self._spawn_apple()
-        else:
-            self.snake.pop()
+            return
+
+        self.snake.pop()
 
     def _increase_speed(self, apple_type):
         self.speed += apple_type.speed_boost
@@ -188,7 +242,7 @@ class SnakeGame:
         apple_type = random.choices(
             population=APPLE_TYPES,
             weights=[0.5, 0.3, 0.2],
-            k=1
+            k=1,
         )[0]
 
         occupied = set(self.snake) | self.obstacles
@@ -206,6 +260,8 @@ class SnakeGame:
         self._draw_grid()
         self._draw_obstacles()
         self._draw_apple()
+        if self.control_mode == "astar" and SHOW_AI_PATH_DEBUG:
+            self._draw_ai_path()
         self._draw_snake()
         self._draw_ui()
 
@@ -237,26 +293,23 @@ class SnakeGame:
 
         if self.direction == Direction.RIGHT:
             eyes = [(0.7, 0.3), (0.7, 0.7)]
-            tongue_rect = pygame.Rect(head_left + CELL_SIZE - 2, head_top + CELL_SIZE//2 - 2, 8, 4)
-
+            tongue_rect = pygame.Rect(head_left + CELL_SIZE - 2, head_top + CELL_SIZE // 2 - 2, 8, 4)
         elif self.direction == Direction.LEFT:
             eyes = [(0.3, 0.3), (0.3, 0.7)]
-            tongue_rect = pygame.Rect(head_left - 6, head_top + CELL_SIZE//2 - 2, 8, 4)
-
+            tongue_rect = pygame.Rect(head_left - 6, head_top + CELL_SIZE // 2 - 2, 8, 4)
         elif self.direction == Direction.UP:
             eyes = [(0.3, 0.3), (0.7, 0.3)]
-            tongue_rect = pygame.Rect(head_left + CELL_SIZE//2 - 2, head_top - 6, 4, 8)
-
+            tongue_rect = pygame.Rect(head_left + CELL_SIZE // 2 - 2, head_top - 6, 4, 8)
         else:
             eyes = [(0.3, 0.7), (0.7, 0.7)]
-            tongue_rect = pygame.Rect(head_left + CELL_SIZE//2 - 2, head_top + CELL_SIZE - 2, 4, 8)
+            tongue_rect = pygame.Rect(head_left + CELL_SIZE // 2 - 2, head_top + CELL_SIZE - 2, 4, 8)
 
         for ex, ey in eyes:
             pygame.draw.circle(
                 self.screen,
                 BLACK,
                 (head_left + int(CELL_SIZE * ex), head_top + int(CELL_SIZE * ey)),
-                eye_radius
+                eye_radius,
             )
 
         pygame.draw.rect(self.screen, (220, 60, 90), tongue_rect)
@@ -270,17 +323,32 @@ class SnakeGame:
         x, y = self.apple_position
         center = (
             x * CELL_SIZE + CELL_SIZE // 2,
-            y * CELL_SIZE + CELL_SIZE // 2
+            y * CELL_SIZE + CELL_SIZE // 2,
         )
         radius = int(CELL_SIZE * self.apple_type.radius_ratio)
         pygame.draw.circle(self.screen, self.apple_type.color, center, radius)
 
+    def _draw_ai_path(self):
+        if len(self.ai_path) < 2:
+            return
+
+        for x, y in self.ai_path[1:]:
+            rect = pygame.Rect(
+                x * CELL_SIZE + 3,
+                y * CELL_SIZE + 3,
+                CELL_SIZE - 6,
+                CELL_SIZE - 6,
+            )
+            pygame.draw.rect(self.screen, AI_PATH_COLOR, rect, width=2, border_radius=4)
+
     def _draw_ui(self):
         score_text = self.font.render(f"Score: {self.score}", True, TEXT_COLOR)
         speed_text = self.font.render(f"Speed: {self.speed:.1f}", True, TEXT_COLOR)
+        mode_text = self.font.render(f"Mode: {self.control_mode.upper()}", True, TEXT_COLOR)
 
         self.screen.blit(score_text, (10, 10))
         self.screen.blit(speed_text, (10, 40))
+        self.screen.blit(mode_text, (10, 70))
 
     def _draw_game_over(self):
         overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
@@ -292,9 +360,9 @@ class SnakeGame:
 
         self.screen.blit(
             text1,
-            (WINDOW_WIDTH // 2 - text1.get_width() // 2, WINDOW_HEIGHT // 2 - 30)
+            (WINDOW_WIDTH // 2 - text1.get_width() // 2, WINDOW_HEIGHT // 2 - 30),
         )
         self.screen.blit(
             text2,
-            (WINDOW_WIDTH // 2 - text2.get_width() // 2, WINDOW_HEIGHT // 2 + 10)
+            (WINDOW_WIDTH // 2 - text2.get_width() // 2, WINDOW_HEIGHT // 2 + 10),
         )
