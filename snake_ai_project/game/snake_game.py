@@ -1,5 +1,4 @@
 import random
-import sys
 from dataclasses import dataclass
 
 import pygame
@@ -17,6 +16,9 @@ from game.settings import (
     NUM_OBSTACLES,
     DEFAULT_CONTROL_MODE,
     SHOW_AI_PATH_DEBUG,
+    MAX_APPLE_TIME,
+    TIME_BONUS_MULTIPLIER,
+    EFFICIENCY_BONUS_MULTIPLIER,
 )
 
 
@@ -35,6 +37,7 @@ APPLE_SMALL_COLOR = (255, 220, 0)   # yellow
 APPLE_MEDIUM_COLOR = (255, 140, 0)  # orange
 APPLE_LARGE_COLOR = (220, 30, 30)   # red
 AI_PATH_COLOR = (70, 130, 255)
+BONUS_COLOR = (255, 220, 50)
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,7 @@ class SnakeGame:
         agent: BaseSnakeAgent | None = None,
         screen: pygame.Surface | None = None,
         clock: pygame.time.Clock | None = None,
+        map_path: str | None = None,
     ):
         if screen is None:
             pygame.init()
@@ -71,6 +75,7 @@ class SnakeGame:
         self.screen = screen
         self.clock = clock
         self.font = make_font(24)
+        self.pause_font = make_font(48)
 
         if agent is None:
             from agents import create_agent
@@ -78,6 +83,7 @@ class SnakeGame:
 
         self.agent = agent
         self.control_mode = self.agent.mode
+        self.map_path = map_path
         self.ai_path: list[tuple[int, int]] = []
 
         self.reset()
@@ -97,22 +103,39 @@ class SnakeGame:
         self.score = 0
         self.speed = float(START_SPEED)
         self.game_over = False
+        self.paused = False
+        self._run_result: str | None = None
 
         self.move_timer = 0.0
         self.move_delay = 1.0 / self.speed
 
-        self.obstacles = self._generate_obstacles(NUM_OBSTACLES)
+        self.apple_timer = 0.0
+        self.steps_since_apple = 0
+        self.apple_optimal_steps = 0
+        self.bonus_flash_timer = 0.0
+        self.last_bonus = 0
+
+        if self.map_path:
+            self.obstacles = self._load_map_obstacles(self.map_path)
+        else:
+            self.obstacles = self._generate_obstacles(NUM_OBSTACLES)
+
         self.apple_position, self.apple_type = self._spawn_apple()
+        self.apple_optimal_steps = self._compute_optimal_steps()
         self.ai_path = []
         self.agent.reset()
 
-    def run(self):
-        while True:
+    def run(self) -> str:
+        while self._run_result is None:
             dt = self.clock.tick(RENDER_FPS) / 1000.0
 
             self._handle_events()
 
-            if not self.game_over:
+            if not self.game_over and not self.paused:
+                self.apple_timer += dt
+                if self.bonus_flash_timer > 0:
+                    self.bonus_flash_timer = max(0.0, self.bonus_flash_timer - dt)
+
                 self.move_timer += dt
 
                 while self.move_timer >= self.move_delay:
@@ -121,6 +144,7 @@ class SnakeGame:
                     if self.game_over:
                         break
 
+                    self.steps_since_apple += 1
                     self._update()
                     self.move_timer -= self.move_delay
 
@@ -129,17 +153,25 @@ class SnakeGame:
 
             self._draw()
 
+        return self._run_result
+
     def _handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
+                self._run_result = "quit"
+                return
 
             self.agent.handle_event(event)
 
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_r and self.game_over:
                     self.reset()
+                elif event.key == pygame.K_p and not self.game_over:
+                    self.paused = not self.paused
+                    if self.paused:
+                        self.move_timer = 0.0
+                elif event.key == pygame.K_ESCAPE and self.paused:
+                    self._run_result = "menu"
 
     def _change_direction(self, new_direction):
         opposite = {
@@ -164,6 +196,8 @@ class SnakeGame:
             score=self.score,
             speed=self.speed,
             game_over=self.game_over,
+            apple_timer=self.apple_timer,
+            steps_since_apple=self.steps_since_apple,
         )
 
     def _apply_agent_decision(self, decision: AgentDecision) -> None:
@@ -208,9 +242,27 @@ class SnakeGame:
         self.snake.insert(0, new_head)
 
         if will_grow:
-            self.score += self.apple_type.points
+            base_points = self.apple_type.points
+
+            time_ratio = max(0.0, 1.0 - self.apple_timer / MAX_APPLE_TIME)
+            time_bonus = round(base_points * time_ratio * TIME_BONUS_MULTIPLIER)
+
+            efficiency_bonus = 0
+            if self.steps_since_apple > 0 and self.apple_optimal_steps > 0:
+                efficiency = min(1.0, self.apple_optimal_steps / self.steps_since_apple)
+                efficiency_bonus = round(base_points * efficiency * EFFICIENCY_BONUS_MULTIPLIER)
+
+            total_bonus = time_bonus + efficiency_bonus
+            self.score += base_points + total_bonus
+            self.last_bonus = total_bonus
+            self.bonus_flash_timer = 0.5
+
+            self.apple_timer = 0.0
+            self.steps_since_apple = 0
+
             self._increase_speed(self.apple_type)
             self.apple_position, self.apple_type = self._spawn_apple()
+            self.apple_optimal_steps = self._compute_optimal_steps()
             return
 
         self.snake.pop()
@@ -222,6 +274,11 @@ class SnakeGame:
             self.speed = MAX_SPEED
 
         self.move_delay = 1.0 / self.speed
+
+    def _compute_optimal_steps(self) -> int:
+        hx, hy = self.snake[0]
+        ax, ay = self.apple_position
+        return abs(hx - ax) + abs(hy - ay)
 
     def _generate_obstacles(self, count):
         obstacles = set()
@@ -236,6 +293,45 @@ class SnakeGame:
                 obstacles.add(pos)
 
         return obstacles
+
+    def _load_map_obstacles(self, path: str) -> frozenset[tuple[int, int]]:
+        try:
+            with open(path, encoding="utf-8") as f:
+                raw_lines = f.read().splitlines()
+
+            rows = [line for line in raw_lines if line.strip()]
+            if len(rows) != GRID_HEIGHT:
+                print(f"[map] Warning: expected {GRID_HEIGHT} rows, got {len(rows)}")
+
+            obstacles: set[tuple[int, int]] = set()
+            warned_cols = False
+            for row_idx, line in enumerate(rows[:GRID_HEIGHT]):
+                tokens = line.split()
+                if len(tokens) != GRID_WIDTH and not warned_cols:
+                    print(
+                        f"[map] Warning: expected {GRID_WIDTH} columns, "
+                        f"got {len(tokens)} at row {row_idx}"
+                    )
+                    warned_cols = True
+                for col_idx, token in enumerate(tokens[:GRID_WIDTH]):
+                    if token == "1":
+                        obstacles.add((col_idx, row_idx))
+
+            # Ensure snake starting cells are always free
+            center_x = GRID_WIDTH // 2
+            center_y = GRID_HEIGHT // 2
+            snake_start = {
+                (center_x, center_y),
+                (center_x - 1, center_y),
+                (center_x - 2, center_y),
+            }
+            obstacles -= snake_start
+
+            return frozenset(obstacles)
+
+        except (OSError, ValueError) as e:
+            print(f"[map] Failed to load '{path}': {e}. Using random obstacles.")
+            return self._generate_obstacles(NUM_OBSTACLES)
 
     def _spawn_apple(self):
         apple_type = random.choices(
@@ -266,6 +362,9 @@ class SnakeGame:
 
         if self.game_over:
             self._draw_game_over()
+
+        if self.paused:
+            self._draw_pause_overlay()
 
         pygame.display.flip()
 
@@ -344,10 +443,16 @@ class SnakeGame:
         score_text = render_text(self.font, f"Score: {self.score}", TEXT_COLOR)
         speed_text = render_text(self.font, f"Speed: {self.speed:.1f}", TEXT_COLOR)
         mode_text = render_text(self.font, f"Mode: {self.control_mode.upper()}", TEXT_COLOR)
+        timer_text = render_text(self.font, f"Time: {self.apple_timer:.1f}s", TEXT_COLOR)
 
         self.screen.blit(score_text, (10, 10))
         self.screen.blit(speed_text, (10, 40))
         self.screen.blit(mode_text, (10, 70))
+        self.screen.blit(timer_text, (10, 100))
+
+        if self.bonus_flash_timer > 0 and self.last_bonus > 0:
+            bonus_text = render_text(self.font, f"Bonus: +{self.last_bonus}", BONUS_COLOR)
+            self.screen.blit(bonus_text, (10, 130))
 
     def _draw_game_over(self):
         overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
@@ -365,3 +470,19 @@ class SnakeGame:
             text2,
             (WINDOW_WIDTH // 2 - text2.get_width() // 2, WINDOW_HEIGHT // 2 + 10),
         )
+
+    def _draw_pause_overlay(self):
+        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 170))
+        self.screen.blit(overlay, (0, 0))
+
+        cx = WINDOW_WIDTH // 2
+        cy = WINDOW_HEIGHT // 2
+
+        title = render_text(self.pause_font, "PAUSED", (255, 255, 255))
+        resume = render_text(self.font, "P  —  Resume", (220, 220, 220))
+        menu_hint = render_text(self.font, "ESC  —  Return to Main Menu", (220, 220, 220))
+
+        self.screen.blit(title, (cx - title.get_width() // 2, cy - 70))
+        self.screen.blit(resume, (cx - resume.get_width() // 2, cy))
+        self.screen.blit(menu_hint, (cx - menu_hint.get_width() // 2, cy + 40))

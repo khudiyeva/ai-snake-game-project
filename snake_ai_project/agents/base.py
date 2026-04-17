@@ -21,6 +21,8 @@ class GameStateSnapshot:
     score: int
     speed: float
     game_over: bool
+    apple_timer: float = 0.0
+    steps_since_apple: int = 0
 
 
 @dataclass(frozen=True)

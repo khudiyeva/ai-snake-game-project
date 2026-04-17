@@ -23,3 +23,8 @@ DEFAULT_CONTROL_MODE = "human"
 
 # Draw AI planned path when enabled.
 SHOW_AI_PATH_DEBUG = True
+
+# Time-based and efficiency scoring
+MAX_APPLE_TIME: float = 15.0
+TIME_BONUS_MULTIPLIER: int = 2
+EFFICIENCY_BONUS_MULTIPLIER: int = 1
