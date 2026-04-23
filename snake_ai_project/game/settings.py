@@ -4,19 +4,19 @@ CELL_SIZE = 20
 
 RENDER_FPS = 60
 START_SPEED = 5
-MAX_SPEED = 160
+MAX_SPEED = 60
 NUM_OBSTACLES = 25
 
 # Control modes
 CONTROL_MODES = ("human", "astar", "rl")
-ACTIVE_CONTROL_MODES = ("human", "astar")
-DISABLED_CONTROL_MODES = ("rl",)
+ACTIVE_CONTROL_MODES = ("human", "astar", "rl")
+DISABLED_CONTROL_MODES = ()
 
 # Menu options in display order.
 MENU_OPTIONS = (
     ("human", "Human"),
     ("astar", "A* Agent"),
-    ("rl", "RL Agent (Coming Soon)"),
+    ("rl", "RL Agent"),
 )
 
 DEFAULT_CONTROL_MODE = "human"

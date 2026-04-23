@@ -1,6 +1,6 @@
 # AI Snake Game Project
 
-A Snake game built with Pygame that benchmarks **A\* pathfinding vs Reinforcement Learning**. A\* is fully implemented; the RL agent is the planned next phase. The goal is a side-by-side performance comparison of classical search against a learned policy.
+A Snake game built with Pygame that benchmarks **A\* pathfinding vs Reinforcement Learning**. Both agents are fully implemented and playable. The goal is a side-by-side performance comparison of classical search against a learned policy.
 
 ## Requirements
 
@@ -28,6 +28,24 @@ source .venv/bin/activate
 pip install -r snake_ai_project/requirements.txt
 ```
 
+> **Note:** `torch` (~2 GB) is downloaded on first install. This may take a few minutes depending on your connection.
+
+## Training the RL Agent
+
+Before using `--mode rl`, train the DQN model once:
+
+```bash
+.venv/bin/python snake_ai_project/train_rl.py
+```
+
+This runs 500 headless training episodes (~2–5 min on CPU) and saves the model to `snake_ai_project/models/rl_model.pth`. You can increase the episode count for a stronger agent:
+
+```bash
+.venv/bin/python snake_ai_project/train_rl.py --episodes 2000
+```
+
+Training prints progress every 100 episodes and saves the best model (by 100-episode mean score) plus a final checkpoint.
+
 ## Run The Game
 
 From project root:
@@ -44,7 +62,7 @@ Menu options:
 
 - Human
 - A* Agent
-- RL Agent (shown but intentionally disabled — reserved for future implementation)
+- RL Agent
 
 ### CLI mode (bypasses menu)
 
@@ -62,9 +80,15 @@ Use this for reproducible runs and automation.
 .venv/bin/python snake_ai_project/main.py --mode astar
 ```
 
-#### RL mode status
+#### RL mode (trained DQN agent)
 
-`--mode rl` is reserved for future implementation and currently exits with a clear message.
+Requires a trained model (see [Training the RL Agent](#training-the-rl-agent) above).
+
+```bash
+.venv/bin/python snake_ai_project/main.py --mode rl
+```
+
+If the model file is missing, the agent prints a clear message guiding you to run the training script first.
 
 ### Loading a custom map
 
@@ -114,6 +138,32 @@ Apple types and base points:
 | Orange (medium) | 3 | +1.5 |
 | Red (large) | 5 | +2.5 |
 
+## Agent Overview
+
+### A* Agent
+
+Three-tier fallback strategy:
+1. **Apple path** — A* to the apple, avoiding body and obstacles.
+2. **Tail chase** — if no apple path exists, A* to own tail tip (keeps the snake from boxing itself in).
+3. **Safest direction** — BFS flood-fill from each candidate move; picks the direction with the most reachable free cells. If no safe move exists, triggers game over gracefully.
+
+### RL Agent (DQN)
+
+A Deep Q-Network trained entirely in a headless Python environment (no pygame during training).
+
+**Observation** — 11 binary features per step:
+```
+[danger_straight, danger_right, danger_left,
+ dir_left, dir_right, dir_up, dir_down,
+ food_left, food_right, food_up, food_down]
+```
+
+**Actions** — 3 relative moves (straight, turn right, turn left). Relative actions prevent the snake from ever reversing into itself.
+
+**Reward** — +10 apple, −10 death, ±1 for moving toward/away from food.
+
+**Architecture** — MLP 11→256→256→3, trained with experience replay and a target network (synced every 100 gradient steps).
+
 ## Linux and WSL Notes
 
 - The game requires a working display backend.
@@ -141,4 +191,12 @@ echo "$DISPLAY" "$WAYLAND_DISPLAY"
 
 ```bash
 echo "$SDL_VIDEODRIVER"
+```
+
+### RL agent moves in a straight line
+
+The model file exists but may be undertrained. Re-run training with more episodes:
+
+```bash
+.venv/bin/python snake_ai_project/train_rl.py --episodes 1000
 ```

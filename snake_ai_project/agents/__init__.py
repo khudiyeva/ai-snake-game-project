@@ -10,8 +10,8 @@ AGENT_REGISTRY: dict[str, type[BaseSnakeAgent]] = {
     "rl": RLAgent,
 }
 
-ACTIVE_MODES = ("human", "astar")
-DISABLED_MODES = ("rl",)
+ACTIVE_MODES = ("human", "astar", "rl")
+DISABLED_MODES = ()
 
 
 def create_agent(mode: str) -> BaseSnakeAgent:
